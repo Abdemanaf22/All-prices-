@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pro-Cut Price List</title>
+<style>
+:root{--blue:#2563EB;--text:#111827;--muted:#6B7280;--border:#E9ECEF;--shadow:0 2px 8px rgba(0,0,0,.06)}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#F7F9FF;color:var(--text);font-family:Arial,sans-serif}
+.top{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--border);padding:10px 12px;z-index:10}
+.top h1{font-size:16px;color:var(--blue);margin-bottom:8px}
+#search{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);font-size:14px}
+#count{font-size:12px;color:var(--muted);margin-top:6px}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;padding:12px}
+.card{background:#fff;border:1px solid #DBEAFE;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;box-shadow:var(--shadow)}
+.card-img{position:relative;padding-top:100%;overflow:hidden;background:#F0F2FA}
+.card-img img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.card-img .no-img{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--border);font-size:40px}
+.card-body{padding:8px}
+.card-name{font-weight:700;font-size:13px;line-height:1.3;margin-bottom:3px}
+.card-code{color:var(--muted);font-size:11px;margin-bottom:6px}
+.prices-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.price-box{border-radius:6px;padding:5px 8px;font-size:11px;font-weight:700;line-height:1.3}
+.price-box .price-label{font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;opacity:.75;margin-bottom:2px}
+.price-ws{background:#d1fae5;border:1.5px solid #6ee7b7;color:#065f46}
+.price-sd{background:#dbeafe;border:1.5px solid #93c5fd;color:#1e40af}
+.price-re{background:#fef9c3;border:1.5px solid #fde047;color:#713f12}
+.price-eu{background:#fee2e2;border:1.5px solid #fca5a5;color:#991b1b}
+.no-results{grid-column:1/-1;text-align:center;padding:40px;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>Pro-Cut Price List</h1>
+  <input id="search" type="text" placeholder="Search products...">
+  <div id="count"></div>
+</div>
+<div id="grid"></div>
+
+<script>
+const SHEET_URL='https://script.google.com/macros/s/AKfycbyau_04otHCniJE5Ho-D4OdBLJ1WGn8T6n0I3V9s6HRdv_Y3A3T-HeibAroYxY29SARXQ/exec';
+const PRICE_COLS=[
+  {key:'whole sale deeler price',label:'Wholesale',cls:'price-ws'},
+  {key:'sub dealer',label:'Sub Dealer',cls:'price-sd'},
+  {key:'retailer',label:'Retailer',cls:'price-re'},
+  {key:'end user',label:'End User',cls:'price-eu'}
+];
+let allProducts=[];
+
+function cleanName(n){
+  const s=(n||'').toString().replace(/\n/g,' ').replace(/\s+/g,' ').trim();
+  if(!s||s.toLowerCase()==='cellimage'||/^\d+$/.test(s)) return '';
+  return s;
+}
+
+function editDist(a,b){
+  if(a===b) return 0;
+  if(a.length>b.length){const t=a;a=b;b=t;}
+  let row=Array.from({length:a.length+1},(_,i)=>i);
+  for(let j=1;j<=b.length;j++){
+    let prev=j;
+    for(let i=1;i<=a.length;i++){
+      const val=b[j-1]===a[i-1]?row[i-1]:Math.min(row[i-1],row[i],prev)+1;
+      row[i-1]=prev;prev=val;
+    }
+    row[a.length]=prev;
+  }
+  return row[a.length];
+}
+
+function cardHTML(p){
+  const img=p.img?`<img src="${p.img}" alt="${p.name}" loading="lazy" onerror="this.style.display='none';this.parentNode.querySelector('.no-img').style.display='flex'">`:'';
+  const noImgStyle=p.img?'display:none':'display:flex';
+  const pricesHTML=PRICE_COLS.map(pc=>{
+    const v=(p.prices&&p.prices[pc.key]||'').replace(/\n/g,'<br>');
+    return `<div class="price-box ${pc.cls}"><div class="price-label">${pc.label}</div><div>${v||'—'}</div></div>`;
+  }).join('');
+  return `<div class="card">
+    <div class="card-img">${img}<div class="no-img" style="${noImgStyle}">🔧</div></div>
+    <div class="card-body">
+      <div class="card-name" title="${p.name}">${p.name}</div>
+      ${p.code?`<div class="card-code">Item Code: ${p.code}</div>`:''}
+      <div class="prices-grid">${pricesHTML}</div>
+    </div>
+  </div>`;
+}
+
+function render(){
+  const q=document.getElementById('search').value.toLowerCase().trim();
+  let filtered=allProducts;
+  if(q){
+    const tokens=q.split(/\s+/).filter(Boolean);
+    const scored=[];
+    for(const p of filtered){
+      const haystack=(p.name||'').toLowerCase()+' '+(p.code||'').toLowerCase();
+      if(haystack.includes(q)){scored.push({p,s:100});continue;}
+      if(tokens.every(t=>haystack.includes(t))){scored.push({p,s:80});continue;}
+      const matchCount=tokens.filter(t=>haystack.includes(t)).length;
+      if(matchCount>=tokens.length-1&&matchCount>0){scored.push({p,s:60});continue;}
+      let fuzzyHits=0;
+      for(const t of tokens){
+        if(t.length<3){if(haystack.includes(t))fuzzyHits++;continue;}
+        const words=haystack.split(/[\s\-\/]+/);
+        for(const w of words){
+          if(Math.abs(w.length-t.length)>2) continue;
+          if(editDist(t,w.substring(0,t.length+2))<=1){fuzzyHits++;break;}
+        }
+      }
+      if(fuzzyHits>=Math.ceil(tokens.length*.6)) scored.push({p,s:fuzzyHits*10});
+    }
+    scored.sort((a,b)=>b.s-a.s);
+    filtered=scored.map(x=>x.p);
+  }
+  const grid=document.getElementById('grid');
+  document.getElementById('count').textContent=filtered.length+' products';
+  if(!filtered.length){grid.innerHTML='<div class="no-results">No products found</div>';return;}
+  grid.innerHTML=filtered.map(cardHTML).join('');
+}
+
+let timer=null;
+document.getElementById('search').addEventListener('input',()=>{
+  clearTimeout(timer);
+  timer=setTimeout(render,250);
+});
+
+async function loadData(){
+  try{
+    const res=await fetch(SHEET_URL,{redirect:'follow'});
+    const text=await res.text();
+    const raw=JSON.parse(text);
+    allProducts=raw.map(r=>{
+      const obj={};
+      obj.img=(r.img||'').toString().trim();
+      obj.name=cleanName(r.name);
+      obj.cat=(r.cat||'').toString().trim();
+      obj.code=(r.code||'').toString().trim();
+      obj.prices={};
+      PRICE_COLS.forEach(pc=>{
+        const k=Object.keys(r).find(x=>x.trim().toLowerCase()===pc.key.toLowerCase())||pc.key;
+        obj.prices[pc.key]=(r[k]||'').toString().trim();
+      });
+      return obj;
+    }).filter(p=>p.name&&p.img&&p.img.startsWith('http'));
+  }catch(e){
+    document.getElementById('grid').innerHTML='<div class="no-results">Could not load products</div>';
+  }
+  render();
+}
+loadData();
+</script>
+</body>
+</html>
